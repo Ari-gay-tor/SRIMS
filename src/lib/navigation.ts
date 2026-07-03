@@ -30,7 +30,7 @@ export const navigation: NavSection[] = [
             label: "Pending Approvals",
             href: "/approvals/pending",
             icon: "CheckSquare",
-            badge: 18,
+            badge: 18, 
           },
           { label: "Approved", href: "/approvals/approved", icon: "CheckSquare" },
           { label: "Rejected", href: "/approvals/rejected", icon: "CheckSquare" },
