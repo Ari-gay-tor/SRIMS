@@ -24,23 +24,41 @@ import { isDatabaseConfigured, getPrismaClient } from "@/lib/prisma";
 async function verifyCredentials(email: string, password: string) {
   if (isDatabaseConfigured) {
     try {
-      const prisma = getPrismaClient();
-      const dbUser = await prisma.user.findUnique({ where: { email: email.toLowerCase() } });
-      if (!dbUser || !dbUser.isActive) return null;
-      const valid = await bcrypt.compare(password, dbUser.passwordHash);
-      if (!valid) return null;
-      return {
-        id: dbUser.id,
-        name: dbUser.name,
-        email: dbUser.email,
-        role: dbUser.role as string,
-        departmentId: dbUser.departmentId,
-        departmentName: "", // resolved below via department relation if needed
-      };
-    } catch (err) {
-      console.error("[auth] Prisma lookup failed — is DATABASE_URL reachable and migrated?", err);
-      return null;
-    }
+  const prisma = getPrismaClient();
+
+  console.log("[AUTH] Login attempt:", email);
+
+  const dbUser = await prisma.user.findUnique({
+    where: { email: email.toLowerCase() },
+  });
+
+  console.log("[AUTH] User found:", !!dbUser);
+
+  if (!dbUser) {
+    console.log("[AUTH] No user found");
+    return null;
+  }
+
+  console.log("[AUTH] Active:", dbUser.isActive);
+
+  const valid = await bcrypt.compare(password, dbUser.passwordHash);
+
+  console.log("[AUTH] Password valid:", valid);
+
+  if (!dbUser.isActive || !valid) return null;
+
+  return {
+    id: dbUser.id,
+    name: dbUser.name,
+    email: dbUser.email,
+    role: dbUser.role as string,
+    departmentId: dbUser.departmentId,
+    departmentName: "",
+  };
+} catch (err) {
+  console.error("[AUTH] Prisma error:", err);
+  return null;
+}
   }
 
   // ── Mock-data fallback (current sandbox / zero-setup demo mode) ──
