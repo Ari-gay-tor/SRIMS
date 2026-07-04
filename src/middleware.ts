@@ -5,6 +5,7 @@ export default withAuth(
   function middleware(req) {
     return NextResponse.json({
       token: req.nextauth.token,
+      cookies: req.cookies.getAll().map(c => c.name),
     });
   },
   {
