@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { persist, createJSONStorage } from "zustand/middleware";
 import {
   MockUser,
   MockItem,
@@ -12,6 +13,8 @@ import {
   requisitions as initialRequisitions,
   stockTransactions as initialStockTransactions,
   generateIssuanceId,
+  departments as initialDepartments,
+  MockDepartment,
 } from "@/lib/data/mock-data";
 
 // ─── Supplier record ───
@@ -122,7 +125,6 @@ interface AppState {
   // Auth
   currentUser: MockUser;
   setCurrentUser: (userId: string) => void;
-  setCurrentUserObject: (user: MockUser) => void;
 
   // Users (master + auth)
   allUsers: MockUser[];
@@ -130,6 +132,12 @@ interface AppState {
   updateUser: (id: string, updates: Partial<MockUser>) => void;
   toggleUserActive: (id: string) => void;
   deleteUser: (id: string) => void;
+
+  // Departments (master — ADMIN only)
+  departments: MockDepartment[];
+  addDepartment: (name: string) => void;
+  updateDepartment: (id: string, name: string) => void;
+  deleteDepartment: (id: string) => void;
 
   // Categories (master)
   categories: MockCategory[];
@@ -190,7 +198,20 @@ interface AppState {
     receivedBy: string;
     remarks: string;
     lines: { itemId: string; itemName: string; issuedQty: number; approvedQty: number; unitPrice: number }[];
-  }) => Promise<string>; // returns issuance referenceNo
+  }) => string;
+
+  /**
+   * Approve-and-issue in one atomic action — called from the Pending
+   * Approvals page. Replaces the old two-step flow (Approve → Issue Items).
+   * Deducts stock, creates outward transactions, sets requisition to
+   * ISSUED/PARTIAL, stamps approver info — all in one call.
+   */
+  approveAndIssue: (
+    reqId: string,
+    approvedLines: { itemId: string; itemName: string; issuedQty: number; approvedQty: number; unitPrice: number }[],
+    approverId: string,
+    approverName: string
+  ) => string; // returns the generated reference/issuance number // returns issuance referenceNo
 
   // GRNs / Stock Inward
   grns: MockGRN[];
@@ -205,7 +226,7 @@ interface AppState {
     deliveryDate: string;
     remarks: string;
     lines: { itemId: string; itemName: string; receivedQty: number; unitPrice: number }[];
-  }) => Promise<string>; // returns GRN id
+  }) => string; // returns GRN id
 
   // Manual Stock Outward / Adjustment
   recordManualMovement: (params: {
@@ -217,8 +238,8 @@ interface AppState {
     referenceNo: string;
     remarks?: string;
     linkedRequisitionId?: string;
-  }) => Promise<void>;
-  
+  }) => void;
+
   // In-progress drafts for the two-step wizards (Issue Items, Stock Inward).
   // These are session-only — they exist so a half-filled wizard survives
   // navigating away and back, but they are NOT persisted to a backend.
@@ -258,12 +279,6 @@ interface AppState {
   notifications: { id: string; message: string; isRead: boolean; link: string; createdAt: string }[];
   markNotificationRead: (id: string) => void;
   addNotification: (message: string, link: string) => void;
-
-  // DB Hydration — called once on client mount when DATABASE_URL is set.
-  // Fetches all master + transactional data from /api/init and replaces
-  // the in-memory Zustand state with live database values.
-  hydrateStore: () => Promise<void>;
-  isHydrated: boolean;
 }
 
 let grnCounter = 47;
@@ -271,17 +286,15 @@ function generateGrnId(): string {
   return `GRN-2025-${String(grnCounter++).padStart(4, "0")}`;
 }
 
-export const useAppStore = create<AppState>((set, get) => ({
+export const useAppStore = create<AppState>()(
+  persist(
+    (set, get) => ({
   // ─── Auth ───
   currentUser: initialUsers[0], // Default: Admin (Rahul Sharma)
 
   setCurrentUser: (userId: string) => {
     const user = get().allUsers.find((u) => u.id === userId);
     if (user) set({ currentUser: user });
-  },
-
-  setCurrentUserObject: (user: MockUser) => {
-    set({ currentUser: user });
   },
 
   // ─── Users (master + auth) ───
@@ -291,9 +304,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     const newUser: MockUser = { ...user, id: `user-${Date.now()}` };
     set((s) => ({ allUsers: [...s.allUsers, newUser] }));
     get().addAuditLog("CREATE", "User", newUser.id, `Created user ${newUser.name} (${newUser.role})`);
+    get().addNotification(
+      `New user added: ${newUser.name} (${newUser.role}) in ${newUser.departmentName}`,
+      "/masters/users"
+    );
 
-    // Best-effort persistence — only succeeds once a real database is connected.
-    // The UI above has already updated regardless, so this never blocks anything.
     fetch("/api/users", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -304,10 +319,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         departmentId: newUser.departmentId,
         password: newUser.passwordHash,
       }),
-    }).catch(() => {
-      // No database configured yet, or unreachable — this is expected and fine.
-      // The user still exists locally for this session; see README for details.
-    });
+    }).catch(() => {});
   },
 
   updateUser: (id, updates) => {
@@ -326,23 +338,65 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   toggleUserActive: (id) => {
     const target = get().allUsers.find((u) => u.id === id);
+    const newStatus = !(target?.isActive ?? true);
     set((s) => ({
-      allUsers: s.allUsers.map((u) => (u.id === id ? { ...u, isActive: !u.isActive } : u)),
+      allUsers: s.allUsers.map((u) => (u.id === id ? { ...u, isActive: newStatus } : u)),
     }));
-    get().addAuditLog("UPDATE", "User", id, `Toggled active status`);
+    get().addAuditLog(
+      "UPDATE", "User", id,
+      `${newStatus ? "Activated" : "Deactivated"} user account`
+    );
+    get().addNotification(
+      `User ${target?.name} has been ${newStatus ? "activated" : "deactivated"}`,
+      "/masters/users"
+    );
 
     fetch(`/api/users/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ isActive: !(target?.isActive ?? true) }),
+      body: JSON.stringify({ isActive: newStatus }),
     }).catch(() => {});
   },
 
   deleteUser: (id) => {
+    const target = get().allUsers.find((u) => u.id === id);
     set((s) => ({ allUsers: s.allUsers.filter((u) => u.id !== id) }));
-    get().addAuditLog("DELETE", "User", id, `Deleted user`);
+    get().addAuditLog("DELETE", "User", id, `Deleted user: ${target?.name || id}`);
+    get().addNotification(`User ${target?.name || id} was deleted`, "/masters/users");
 
     fetch(`/api/users/${id}`, { method: "DELETE" }).catch(() => {});
+  },
+
+  // ─── Departments (master — ADMIN only) ───
+  departments: initialDepartments,
+
+  addDepartment: (name) => {
+    const newDept: MockDepartment = { id: `dept-${Date.now()}`, name };
+    set((s) => ({ departments: [...s.departments, newDept] }));
+    get().addAuditLog("CREATE", "Department", newDept.id, `Created department: ${name}`);
+    get().addNotification(`New department added: ${name}`, "/masters/departments");
+  },
+
+  updateDepartment: (id, name) => {
+    const old = get().departments.find((d) => d.id === id);
+    set((s) => ({
+      departments: s.departments.map((d) => (d.id === id ? { ...d, name } : d)),
+      allUsers: s.allUsers.map((u) =>
+        u.departmentId === id ? { ...u, departmentName: name } : u
+      ),
+    }));
+    get().addAuditLog(
+      "UPDATE", "Department", id,
+      `Renamed department from "${old?.name}" to "${name}"`
+    );
+  },
+
+  deleteDepartment: (id) => {
+    const hasUsers = get().allUsers.some((u) => u.departmentId === id);
+    if (hasUsers) return;
+    const dept = get().departments.find((d) => d.id === id);
+    set((s) => ({ departments: s.departments.filter((d) => d.id !== id) }));
+    get().addAuditLog("DELETE", "Department", id, `Deleted department: ${dept?.name || id}`);
   },
 
   // ─── Categories (master) ───
@@ -352,20 +406,6 @@ export const useAppStore = create<AppState>((set, get) => ({
     const newCat: MockCategory = { ...cat, id: `cat-${Date.now()}` };
     set((s) => ({ categories: [...s.categories, newCat] }));
     get().addAuditLog("CREATE", "Category", newCat.id, `Created category ${newCat.name}`);
-
-    fetch("/api/categories", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: newCat.name, parentId: newCat.parentId, icon: newCat.icon, color: newCat.color }),
-    }).then(async (res) => {
-      if (res.ok) {
-        const created = await res.json();
-        // Replace the temp id with the real DB id
-        set((s) => ({
-          categories: s.categories.map((c) => (c.id === newCat.id ? { ...c, id: created.id } : c)),
-        }));
-      }
-    }).catch(() => {});
   },
 
   updateCategory: (id, updates) => {
@@ -373,19 +413,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       categories: s.categories.map((c) => (c.id === id ? { ...c, ...updates } : c)),
     }));
     get().addAuditLog("UPDATE", "Category", id, `Updated category`);
-
-    fetch(`/api/categories/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(updates),
-    }).catch(() => {});
   },
 
   deleteCategory: (id) => {
     set((s) => ({ categories: s.categories.filter((c) => c.id !== id) }));
     get().addAuditLog("DELETE", "Category", id, `Deleted category`);
-
-    fetch(`/api/categories/${id}`, { method: "DELETE" }).catch(() => {});
   },
 
   // ─── Suppliers (master) ───
@@ -395,19 +427,6 @@ export const useAppStore = create<AppState>((set, get) => ({
     const newSup: MockSupplier = { ...sup, id: `sup-${Date.now()}` };
     set((s) => ({ suppliers: [...s.suppliers, newSup] }));
     get().addAuditLog("CREATE", "Supplier", newSup.id, `Created supplier ${newSup.name}`);
-
-    fetch("/api/suppliers", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: newSup.name, contact: newSup.contact, address: newSup.address }),
-    }).then(async (res) => {
-      if (res.ok) {
-        const created = await res.json();
-        set((s) => ({
-          suppliers: s.suppliers.map((su) => (su.id === newSup.id ? { ...su, id: created.id } : su)),
-        }));
-      }
-    }).catch(() => {});
   },
 
   updateSupplier: (id, updates) => {
@@ -415,19 +434,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       suppliers: s.suppliers.map((sup) => (sup.id === id ? { ...sup, ...updates } : sup)),
     }));
     get().addAuditLog("UPDATE", "Supplier", id, `Updated supplier`);
-
-    fetch(`/api/suppliers/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(updates),
-    }).catch(() => {});
   },
 
   deleteSupplier: (id) => {
     set((s) => ({ suppliers: s.suppliers.filter((sup) => sup.id !== id) }));
     get().addAuditLog("DELETE", "Supplier", id, `Deleted supplier`);
-
-    fetch(`/api/suppliers/${id}`, { method: "DELETE" }).catch(() => {});
   },
 
   // ─── Items / Stock ───
@@ -435,72 +446,67 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   getItem: (itemId) => get().stockItems.find((i) => i.id === itemId),
 
-  adjustStock: (itemId, delta) =>
+  adjustStock: (itemId, delta) => {
+    const item = get().stockItems.find((i) => i.id === itemId);
+    const newStock = item ? Math.max(0, item.currentStock + delta) : 0;
+
     set((state) => ({
       stockItems: state.stockItems.map((i) =>
         i.id === itemId ? { ...i, currentStock: Math.max(0, i.currentStock + delta) } : i
       ),
-    })),
+    }));
+
+    // Trigger a low-stock alert when an item drops to or below its minimum
+    if (item && delta < 0 && newStock <= item.minStockLevel && item.currentStock > item.minStockLevel) {
+      const severity = newStock === 0 ? "OUT OF STOCK" : newStock <= item.minStockLevel * 0.5 ? "CRITICAL" : "LOW";
+      get().addNotification(
+        `${severity}: ${item.name} stock is now ${newStock} (min: ${item.minStockLevel})`,
+        "/inventory/low-stock"
+      );
+    }
+  },
 
   addItem: (item) => {
     const newItem: MockItem = { ...item, id: `ITM-${String(Date.now()).slice(-4)}` };
     set((s) => ({ stockItems: [...s.stockItems, newItem] }));
     get().addAuditLog("CREATE", "Item", newItem.id, `Created item ${newItem.name}`);
-
-    fetch("/api/items", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: newItem.name,
-        categoryId: newItem.categoryId,
-        unit: newItem.unit,
-        unitPrice: newItem.unitPrice,
-        minStockLevel: newItem.minStockLevel,
-        currentStock: newItem.currentStock,
-        iconKey: newItem.iconKey,
-      }),
-    }).then(async (res) => {
-      if (res.ok) {
-        const created = await res.json();
-        set((s) => ({
-          stockItems: s.stockItems.map((i) => (i.id === newItem.id ? { ...i, id: created.id } : i)),
-        }));
-      }
-    }).catch(() => {});
   },
 
   updateItem: (id, updates) => {
+    const existing = get().stockItems.find((i) => i.id === id);
     set((s) => ({
       stockItems: s.stockItems.map((i) => (i.id === id ? { ...i, ...updates } : i)),
     }));
-    get().addAuditLog("UPDATE", "Item", id, `Updated item details`);
 
-    fetch(`/api/items/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(updates),
-    }).catch(() => {});
+    // Build a specific audit message instead of the generic "Updated item details"
+    const changes: string[] = [];
+    if (updates.name && updates.name !== existing?.name)
+      changes.push(`name: "${existing?.name}" → "${updates.name}"`);
+    if (updates.unitPrice !== undefined && updates.unitPrice !== existing?.unitPrice)
+      changes.push(`price: ₹${existing?.unitPrice} → ₹${updates.unitPrice}`);
+    if (updates.minStockLevel !== undefined && updates.minStockLevel !== existing?.minStockLevel)
+      changes.push(`min stock: ${existing?.minStockLevel} → ${updates.minStockLevel}`);
+    if (updates.categoryId && updates.categoryId !== existing?.categoryId)
+      changes.push(`category changed`);
+
+    get().addAuditLog(
+      "UPDATE", "Item", id,
+      changes.length > 0
+        ? `Updated ${existing?.name}: ${changes.join("; ")}`
+        : `Updated item ${existing?.name || id}`
+    );
   },
 
   toggleItemActive: (id) => {
-    const target = get().stockItems.find((i) => i.id === id);
     set((s) => ({
       stockItems: s.stockItems.map((i) => (i.id === id ? { ...i, isActive: !i.isActive } : i)),
     }));
     get().addAuditLog("UPDATE", "Item", id, `Toggled active status`);
-
-    fetch(`/api/items/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ isActive: !(target?.isActive ?? true) }),
-    }).catch(() => {});
   },
 
   deleteItem: (id) => {
     set((s) => ({ stockItems: s.stockItems.filter((i) => i.id !== id) }));
     get().addAuditLog("DELETE", "Item", id, `Deleted item`);
-
-    fetch(`/api/items/${id}`, { method: "DELETE" }).catch(() => {});
   },
 
   // ─── Requisitions ───
@@ -518,37 +524,13 @@ export const useAppStore = create<AppState>((set, get) => ({
         result.id,
         `Auto-approved (priority: ${result.priority}) per Auto-Approval Rules`
       );
+    } else if (result.status === "PENDING") {
+      // Notify approvers that a new requisition is waiting
+      get().addNotification(
+        `New requisition ${result.id} submitted by ${result.userName} — awaiting approval`,
+        "/approvals/pending"
+      );
     }
-
-    fetch("/api/requisitions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        id: req.id,
-        userId: req.userId,
-        departmentId: req.departmentId,
-        status: req.status,
-        purpose: req.purpose,
-        remarks: req.remarks,
-        requiredDate: req.requiredDate,
-        totalAmount: req.totalAmount,
-        priority: req.priority,
-        items: req.items.map((item) => ({
-          itemId: item.itemId,
-          requestedQty: item.requestedQty,
-          quantity: item.requestedQty,
-          unitPrice: item.unitPrice,
-        })),
-      }),
-    })
-      .then(async (res) => {
-        if (res.status === 503) return;
-        if (res.ok) {
-          set({ isHydrated: false });
-          await get().hydrateStore();
-        }
-      })
-      .catch(() => {});
   },
 
   updateRequisitionStatus: (reqId, status, opts) => {
@@ -598,23 +580,32 @@ export const useAppStore = create<AppState>((set, get) => ({
       );
     }
 
-    fetch(`/api/requisitions/${reqId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        status,
-        approvedQty: opts?.approvedQty,
-        rejectedReason: opts?.rejectedReason,
-      }),
-    })
-      .then(async (res) => {
-        if (res.status === 503) return;
-        if (res.ok) {
-          set({ isHydrated: false });
-          await get().hydrateStore();
-        }
-      })
-      .catch(() => {});
+    // Push targeted notifications for key status transitions
+    const req = get().requisitions.find((r) => r.id === reqId);
+    if (req) {
+      if (status === "APPROVED") {
+        // Notify Inventory team that a req is ready to issue
+        get().addNotification(
+          `${reqId} approved — ready to issue from ${req.departmentName}`,
+          "/issue/queue"
+        );
+        // Notify the requester their req was approved
+        get().addNotification(
+          `Your requisition ${reqId} has been approved`,
+          "/requisitions/my"
+        );
+      } else if (status === "REJECTED") {
+        get().addNotification(
+          `Your requisition ${reqId} was rejected — see Rejected Approvals for reason`,
+          "/approvals/rejected"
+        );
+      } else if (status === "PENDING" && !autoApprovedId) {
+        get().addNotification(
+          `Requisition ${reqId} submitted by ${req.userName} is awaiting your approval`,
+          "/approvals/pending"
+        );
+      }
+    }
   },
 
   updateRequisitionFull: (reqId, updates) => {
@@ -640,33 +631,6 @@ export const useAppStore = create<AppState>((set, get) => ({
         `Auto-approved (priority: ${merged.priority}) per Auto-Approval Rules`
       );
     }
-
-    fetch(`/api/requisitions/${reqId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        status: updates.status,
-        purpose: updates.purpose,
-        remarks: updates.remarks,
-        requiredDate: updates.requiredDate,
-        totalAmount: updates.totalAmount,
-        priority: updates.priority,
-        items: updates.items?.map((item) => ({
-          itemId: item.itemId,
-          requestedQty: item.requestedQty,
-          quantity: item.requestedQty,
-          unitPrice: item.unitPrice,
-        })),
-      }),
-    })
-      .then(async (res) => {
-        if (res.status === 503) return;
-        if (res.ok) {
-          set({ isHydrated: false });
-          await get().hydrateStore();
-        }
-      })
-      .catch(() => {});
   },
 
   deleteRequisition: (reqId) => {
@@ -674,16 +638,6 @@ export const useAppStore = create<AppState>((set, get) => ({
       requisitions: state.requisitions.filter((r) => r.id !== reqId),
     }));
     get().addAuditLog("DELETE", "Requisition", reqId, "Deleted draft requisition");
-
-    fetch(`/api/requisitions/${reqId}`, { method: "DELETE" })
-      .then(async (res) => {
-        if (res.status === 503) return;
-        if (res.ok) {
-          set({ isHydrated: false });
-          await get().hydrateStore();
-        }
-      })
-      .catch(() => {});
   },
 
   // ─── Auto-Approval Rules ───
@@ -766,198 +720,236 @@ export const useAppStore = create<AppState>((set, get) => ({
   // ─── Issuances ───
   issuances: [],
 
-  confirmIssuance: async ({ requisitionId, issuedToId, issuedToName, receivedBy, remarks, lines }) => {
+  confirmIssuance: ({ requisitionId, issuedToId, issuedToName, receivedBy, remarks, lines }) => {
+    const state = get();
     const referenceNo = generateIssuanceId();
+    const actor = state.currentUser;
 
-    const res = await fetch("/api/issuances", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        id: referenceNo,
-        requisitionId,
-        issuedToId,
-        receivedBy,
-        remarks,
-        lines,
-      }),
+    // Determine overall status: Issued if every line fully issued, else Partial
+    const isFullyIssued = lines.every((l) => l.issuedQty >= l.approvedQty);
+
+    // Decrement stock for each issued line
+    lines.forEach((l) => {
+      if (l.issuedQty > 0) {
+        state.adjustStock(l.itemId, -l.issuedQty);
+      }
     });
 
-    if (res.status === 503) {
-      const state = get();
-      const actor = state.currentUser;
-      const isFullyIssued = lines.every((l) => l.issuedQty >= l.approvedQty);
+    // Record issuance
+    const issuance: MockIssuance = {
+      id: referenceNo,
+      requisitionId,
+      issuedById: actor.id,
+      issuedByName: actor.name,
+      issuedToId,
+      issuedToName,
+      receivedBy,
+      issueDate: new Date().toISOString(),
+      referenceNo,
+      remarks,
+      lines: lines.map((l) => ({
+        itemId: l.itemId,
+        itemName: l.itemName,
+        issuedQty: l.issuedQty,
+        unitPrice: l.unitPrice,
+      })),
+    };
 
-      lines.forEach((l) => {
-        if (l.issuedQty > 0) {
-          state.adjustStock(l.itemId, -l.issuedQty);
-        }
-      });
-
-      const issuance: MockIssuance = {
-        id: referenceNo,
-        requisitionId,
-        issuedById: actor.id,
-        issuedByName: actor.name,
-        issuedToId,
-        issuedToName,
-        receivedBy,
-        issueDate: new Date().toISOString(),
+    // Add stock transactions (OUTWARD)
+    const newTransactions: MockStockTransaction[] = lines
+      .filter((l) => l.issuedQty > 0)
+      .map((l, idx) => ({
+        id: `st-iss-${referenceNo}-${idx}`,
+        type: "OUTWARD" as const,
+        itemId: l.itemId,
+        itemName: l.itemName,
+        quantity: l.issuedQty,
+        unitPrice: l.unitPrice,
         referenceNo,
-        remarks,
-        lines: lines.map((l) => ({
-          itemId: l.itemId,
-          itemName: l.itemName,
-          issuedQty: l.issuedQty,
-          unitPrice: l.unitPrice,
-        })),
-      };
-
-      const newTransactions: MockStockTransaction[] = lines
-        .filter((l) => l.issuedQty > 0)
-        .map((l, idx) => ({
-          id: `st-iss-${referenceNo}-${idx}`,
-          type: "OUTWARD" as const,
-          itemId: l.itemId,
-          itemName: l.itemName,
-          quantity: l.issuedQty,
-          unitPrice: l.unitPrice,
-          referenceNo,
-          date: new Date().toISOString().split("T")[0],
-          userId: actor.id,
-          linkedRequisitionId: requisitionId,
-        }));
-
-      set((s) => ({
-        issuances: [issuance, ...s.issuances],
-        stockTransactions: [...newTransactions, ...s.stockTransactions],
-        requisitions: s.requisitions.map((r) => {
-          if (r.id !== requisitionId) return r;
-          return {
-            ...r,
-            status: isFullyIssued ? "ISSUED" : "PARTIAL",
-            items: r.items.map((item) => {
-              const line = lines.find((l) => l.itemId === item.itemId);
-              return line ? { ...item, issuedQty: line.issuedQty } : item;
-            }),
-          };
-        }),
+        date: new Date().toISOString().split("T")[0],
+        userId: actor.id,
+        linkedRequisitionId: requisitionId,
       }));
 
-      get().addAuditLog(
-        isFullyIssued ? "ISSUE_COMPLETE" : "ISSUE_PARTIAL",
-        "Requisition",
-        requisitionId,
-        `Issued via ${referenceNo}. ${lines.length} line(s) processed.`
+    // Update requisition: issuedQty per line + overall status
+    set((s) => ({
+      issuances: [issuance, ...s.issuances],
+      stockTransactions: [...newTransactions, ...s.stockTransactions],
+      requisitions: s.requisitions.map((r) => {
+        if (r.id !== requisitionId) return r;
+        return {
+          ...r,
+          status: isFullyIssued ? "ISSUED" : "PARTIAL",
+          items: r.items.map((item) => {
+            const line = lines.find((l) => l.itemId === item.itemId);
+            return line ? { ...item, issuedQty: line.issuedQty } : item;
+          }),
+        };
+      }),
+    }));
+
+    // Audit log
+    get().addAuditLog(
+      isFullyIssued ? "ISSUE_COMPLETE" : "ISSUE_PARTIAL",
+      "Requisition",
+      requisitionId,
+      `Issued via ${referenceNo}. ${lines.length} line(s) processed.`
+    );
+
+    // Notify the requester that their items have been dispatched
+    const req = get().requisitions.find((r) => r.id === requisitionId);
+    if (req) {
+      get().addNotification(
+        `Your requisition ${requisitionId} has been ${isFullyIssued ? "fully issued" : "partially issued"} (${referenceNo})`,
+        "/requisitions/my"
       );
-
-      return referenceNo;
     }
 
-    if (!res.ok) {
-      const err = await res.json().catch(() => null);
-      throw new Error(err?.error || "Failed to confirm issuance");
-    }
+    return referenceNo;
+  },
 
-    const data = await res.json();
-    set({ isHydrated: false });
-    await get().hydrateStore();
-    return data.referenceNo || referenceNo;
+  // ─── Approve-and-issue in one atomic action ───────────────────────────────
+  approveAndIssue: (reqId, approvedLines, approverId, approverName) => {
+    const req = get().requisitions.find((r) => r.id === reqId);
+    if (!req) return "";
+
+    // Calculate the ACTUAL issued total — this is what the approver confirmed,
+    // not the original requested amount (partial issue = lower price).
+    const actualIssuedAmount = approvedLines.reduce(
+      (sum, l) => sum + l.issuedQty * l.unitPrice,
+      0
+    );
+
+    // Stamp approver info + update totalAmount to reflect actual issued amount
+    set((s) => ({
+      requisitions: s.requisitions.map((r) =>
+        r.id === reqId
+          ? {
+              ...r,
+              approvedById: approverId,
+              approvedByName: approverName,
+              approvedAt: new Date().toISOString(),
+              totalAmount: actualIssuedAmount,   // ← key fix: recalculate from issued qty
+              items: r.items.map((item) => {
+                const line = approvedLines.find((l) => l.itemId === item.itemId);
+                return line
+                  ? { ...item, approvedQty: line.issuedQty, issuedQty: line.issuedQty }
+                  : item;
+              }),
+            }
+          : r
+      ),
+    }));
+
+    // confirmIssuance handles stock deduction, outward transactions,
+    // issuance record, ISSUED/PARTIAL status, and notifications
+    const referenceNo = get().confirmIssuance({
+      requisitionId: reqId,
+      issuedToId: req.userId,
+      issuedToName: req.userName,
+      receivedBy: req.userName,
+      remarks: `Approved and auto-issued by ${approverName}`,
+      lines: approvedLines,
+    });
+
+    get().addAuditLog(
+      "APPROVE_AND_ISSUE",
+      "Requisition",
+      reqId,
+      `Approved and auto-issued by ${approverName} → ${referenceNo}. Issued amount: ₹${actualIssuedAmount.toFixed(2)}`
+    );
+
+    return referenceNo;
   },
 
   // ─── GRNs / Stock Inward ───
   grns: [],
   stockTransactions: initialStockTransactions,
 
-  submitGRN: async ({ supplierId, supplierName, grnDate, invoiceNo, invoiceDate, deliveryChallan, deliveryDate, remarks, lines }) => {
-const grnId = generateGrnId();
+  submitGRN: ({ supplierId, supplierName, grnDate, invoiceNo, invoiceDate, deliveryChallan, deliveryDate, remarks, lines }) => {
+    const state = get();
+    const grnId = generateGrnId();
+    const actor = state.currentUser;
+    const totalValue = lines.reduce((s, l) => s + l.receivedQty * l.unitPrice, 0);
 
-const res = await fetch("/api/grns", {
-  method: "POST",
-  headers: {
-    "Content-Type": "application/json",
-  },
-  body: JSON.stringify({
-  id: grnId,
-  supplierId,
-  supplierName,
-  grnDate,
-  invoiceNo,
-  invoiceDate,
-  deliveryChallan,
-  deliveryDate,
-  remarks,
-  lines,
-}),
-});
+    // Increment stock for each line
+    lines.forEach((l) => {
+      state.adjustStock(l.itemId, l.receivedQty);
+    });
 
-if (!res.ok) {
-  const err = await res.json().catch(() => null);
-  throw new Error(err?.error || "Failed to submit GRN");
-}
+    const grn: MockGRN = {
+      id: grnId,
+      supplierId,
+      supplierName,
+      grnDate,
+      invoiceNo,
+      invoiceDate,
+      deliveryChallan,
+      deliveryDate,
+      remarks,
+      totalValue,
+      lines,
+    };
 
-// allow rehydration
-set({ isHydrated: false });
-await get().hydrateStore();
+    const newTransactions: MockStockTransaction[] = lines.map((l, idx) => ({
+      id: `st-grn-${grnId}-${idx}`,
+      type: "INWARD" as const,
+      itemId: l.itemId,
+      itemName: l.itemName,
+      quantity: l.receivedQty,
+      unitPrice: l.unitPrice,
+      referenceNo: grnId,
+      date: grnDate,
+      userId: actor.id,
+    }));
 
-return grnId;
+    set((s) => ({
+      grns: [grn, ...s.grns],
+      stockTransactions: [...newTransactions, ...s.stockTransactions],
+    }));
+
+    get().addAuditLog(
+      "STOCK_INWARD",
+      "GRN",
+      grnId,
+      `Received ${lines.length} item(s) from ${supplierName}. Total value: ₹${totalValue.toFixed(2)}`
+    );
+
+    return grnId;
   },
 
   // ─── Manual Stock Outward / Adjustment ───
-  recordManualMovement: async ({ type, itemId, itemName, quantity, unitPrice, referenceNo, remarks, linkedRequisitionId }) => {
-    console.log("REAL STORE FUNCTION FIRED");
-    const res = await fetch("/api/transactions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        type,
-        itemId,
-        quantity,
-        unitPrice,
-        referenceNo,
-        remarks,
-        linkedRequisitionId,
-      }),
-    });
+  recordManualMovement: ({ type, itemId, itemName, quantity, unitPrice, referenceNo, remarks, linkedRequisitionId }) => {
+    const state = get();
+    const actor = state.currentUser;
 
-    if (res.status === 503) {
-      const state = get();
-      const actor = state.currentUser;
-      const delta = type === "OUTWARD" ? -Math.abs(quantity) : quantity;
-      state.adjustStock(itemId, delta);
+    // OUTWARD always decrements; ADJUSTMENT applies signed delta directly
+    const delta = type === "OUTWARD" ? -Math.abs(quantity) : quantity;
+    state.adjustStock(itemId, delta);
 
-      const newTransaction: MockStockTransaction = {
-        id: `st-manual-${Date.now()}`,
-        type,
-        itemId,
-        itemName,
-        quantity: type === "OUTWARD" ? Math.abs(quantity) : quantity,
-        unitPrice,
-        referenceNo,
-        date: new Date().toISOString().split("T")[0],
-        userId: actor.id,
-        linkedRequisitionId,
-      };
+    const newTransaction: MockStockTransaction = {
+      id: `st-manual-${Date.now()}`,
+      type,
+      itemId,
+      itemName,
+      quantity: type === "OUTWARD" ? Math.abs(quantity) : quantity,
+      unitPrice,
+      referenceNo,
+      date: new Date().toISOString().split("T")[0],
+      userId: actor.id,
+      linkedRequisitionId,
+    };
 
-      set((s) => ({
-        stockTransactions: [newTransaction, ...s.stockTransactions],
-      }));
+    set((s) => ({
+      stockTransactions: [newTransaction, ...s.stockTransactions],
+    }));
 
-      get().addAuditLog(
-        type === "OUTWARD" ? "STOCK_OUTWARD" : "STOCK_ADJUSTMENT",
-        "Item",
-        itemId,
-        `${type === "OUTWARD" ? "Issued" : "Adjusted"} ${itemName} by ${quantity > 0 ? "+" : ""}${quantity}. Ref: ${referenceNo}${remarks ? ` — ${remarks}` : ""}`
-      );
-      return;
-    }
-
-    if (!res.ok) {
-      const err = await res.json().catch(() => null);
-      throw new Error(err?.error || "Failed to record stock movement");
-    }
-
-    set({ isHydrated: false });
-    await get().hydrateStore();
+    get().addAuditLog(
+      type === "OUTWARD" ? "STOCK_OUTWARD" : "STOCK_ADJUSTMENT",
+      "Item",
+      itemId,
+      `${type === "OUTWARD" ? "Issued" : "Adjusted"} ${itemName} by ${quantity > 0 ? "+" : ""}${quantity}. Ref: ${referenceNo}${remarks ? ` — ${remarks}` : ""}`
+    );
   },
 
   // ─── Issue Items wizard drafts (per-requisition, session-only) ───
@@ -1082,44 +1074,37 @@ return grnId;
         ...state.notifications,
       ],
     })),
-
-  // ─── DB Hydration ───
-  isHydrated: false,
-
-  hydrateStore: async () => {
-    // Only run on the client — this fetches from a Next.js API route
-    if (typeof window === "undefined") return;
-    // Avoid double-hydrating
-    if (get().isHydrated) return;
-
-    try {
-      const res = await fetch("/api/init");
-      if (!res.ok) {
-        // 503 = DB not configured; 401 = not logged in yet. Both are fine — just
-        // continue with mock data. Any other status is logged as a warning.
-        if (res.status !== 503 && res.status !== 401) {
-          console.warn("[hydrateStore] Unexpected status:", res.status);
-        }
-        return;
-      }
-
-      const data = await res.json();
-
-      set((s) => ({
-        isHydrated: true,
-        allUsers: data.allUsers ?? s.allUsers,
-        categories: data.categories ?? s.categories,
-        suppliers: data.suppliers ?? s.suppliers,
-        stockItems: data.stockItems ?? s.stockItems,
-        requisitions: data.requisitions ?? s.requisitions,
-        stockTransactions: data.stockTransactions ?? s.stockTransactions,
-        issuances: data.issuances ?? s.issuances,
-        auditLogs: data.auditLogs ?? s.auditLogs,
-        notifications: data.notifications ?? s.notifications,
-      }));
-    } catch (err) {
-      // Network error — silently continue with in-memory mock data
-      console.warn("[hydrateStore] Could not reach /api/init:", err);
-    }
-  },
-}));
+}),
+  {
+    name: "srims-store-v1",
+    storage: createJSONStorage(() =>
+      typeof window !== "undefined" ? localStorage : (({
+        getItem: () => null,
+        setItem: () => {},
+        removeItem: () => {},
+        length: 0,
+        clear: () => {},
+        key: () => null,
+      }) as unknown as Storage)
+    ),
+    // Do NOT persist currentUser (re-synced from NextAuth session on load)
+    // or session-only wizard state (cart clears on submit already).
+    // Everything else should survive refresh / logout-login / browser restart.
+    partialize: (state) => ({
+      allUsers: state.allUsers,
+      departments: state.departments,
+      categories: state.categories,
+      suppliers: state.suppliers,
+      stockItems: state.stockItems,
+      requisitions: state.requisitions,
+      grns: state.grns,
+      issuances: state.issuances,
+      stockTransactions: state.stockTransactions,
+      auditLogs: state.auditLogs,
+      notifications: state.notifications,
+      autoApprovalSettings: state.autoApprovalSettings,
+      issueDrafts: state.issueDrafts,
+      draftGRNs: state.draftGRNs,
+    }),
+  }
+));

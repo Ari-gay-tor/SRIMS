@@ -1,3 +1,8 @@
+// SRIMS Prisma Schema
+// Switch datasource to mysql when deploying:
+//   provider = "mysql"
+//   url      = env("DATABASE_URL")
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -5,250 +10,6 @@ generator client {
 datasource db {
   provider = "mysql"
   url      = env("DATABASE_URL")
-}
-
-model Department {
-  id           String        @id @default(cuid())
-  name         String        @unique
-  requisitions Requisition[]
-  users        User[]
-
-  @@map("departments")
-}
-
-model User {
-  id                  String               @id @default(cuid())
-  name                String
-  email               String               @unique
-  passwordHash        String
-  role                Role                 @default(USER)
-  departmentId        String
-  approverId          String?
-  isActive            Boolean              @default(true)
-  avatarUrl           String?              @db.LongText
-  auditLogs           AuditLog[]
-  issuances           Issuance[]           @relation("IssuedByUser")
-  receivedIssuances   Issuance[]           @relation("IssuedToUser")
-  notifications       Notification[]
-  passwordResetTokens PasswordResetToken[]
-  approvedReqs        Requisition[]        @relation("ApproverRequisitions")
-  requisitions        Requisition[]        @relation("RequesterRequisitions")
-  stockTransactions   StockTransaction[]
-  approver            User?                @relation("UserApprover", fields: [approverId], references: [id])
-  subordinates        User[]               @relation("UserApprover")
-  department          Department           @relation(fields: [departmentId], references: [id])
-
-  @@index([departmentId])
-  @@index([approverId], map: "users_approverId_fkey")
-  @@map("users")
-}
-
-model PasswordResetToken {
-  id        String    @id @default(cuid())
-  userId    String
-  token     String    @unique
-  expiresAt DateTime
-  usedAt    DateTime?
-  createdAt DateTime  @default(now())
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([token])
-  @@index([userId], map: "password_reset_tokens_userId_fkey")
-  @@map("password_reset_tokens")
-}
-
-model Category {
-  id       String     @id @default(cuid())
-  name     String     @unique
-  parentId String?
-  icon     String?
-  color    String?
-  parent   Category?  @relation("CategoryHierarchy", fields: [parentId], references: [id])
-  children Category[] @relation("CategoryHierarchy")
-  items    Item[]
-
-  @@index([parentId])
-  @@map("categories")
-}
-
-model Item {
-  id                String             @id
-  name              String
-  categoryId        String
-  unit              String
-  unitPrice         Float
-  currentStock      Int                @default(0)
-  minStockLevel     Int                @default(10)
-  isActive          Boolean            @default(true)
-  iconKey           String?
-  grnItems          GRNItem[]
-  category          Category           @relation(fields: [categoryId], references: [id])
-  requisitionItems  RequisitionItem[]
-  stockTransactions StockTransaction[]
-
-  @@index([categoryId])
-  @@map("items")
-}
-
-model Supplier {
-  id      String  @id @default(cuid())
-  name    String
-  contact String?
-  address String?
-  grns    GRN[]
-
-  @@map("suppliers")
-}
-
-model Requisition {
-  id             String            @id
-  userId         String
-  departmentId   String
-  status         RequisitionStatus @default(DRAFT)
-  purpose        String?
-  remarks        String?           @db.Text
-  requiredDate   DateTime?
-  totalAmount    Float             @default(0)
-  priority       Priority          @default(NORMAL)
-  createdAt      DateTime          @default(now())
-  updatedAt      DateTime          @updatedAt
-  approvedById   String?
-  approvedAt     DateTime?
-  rejectedReason String?           @db.Text
-  issuances           Issuance[]
-  items               RequisitionItem[]
-  linkedTransactions  StockTransaction[]
-  approvedBy          User?             @relation("ApproverRequisitions", fields: [approvedById], references: [id])
-  department     Department        @relation(fields: [departmentId], references: [id])
-  user           User              @relation("RequesterRequisitions", fields: [userId], references: [id])
-
-  @@index([status])
-  @@index([userId])
-  @@index([departmentId])
-  @@index([createdAt])
-  @@index([approvedById], map: "requisitions_approvedById_fkey")
-  @@map("requisitions")
-}
-
-model RequisitionItem {
-  id            String      @id @default(cuid())
-  requisitionId String
-  itemId        String
-  requestedQty  Int
-  approvedQty   Int         @default(0)
-  issuedQty     Int         @default(0)
-  unitPrice     Float
-  item          Item        @relation(fields: [itemId], references: [id])
-  requisition   Requisition @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
-
-  @@index([itemId], map: "requisition_items_itemId_fkey")
-  @@index([requisitionId], map: "requisition_items_requisitionId_fkey")
-  @@map("requisition_items")
-}
-
-model Issuance {
-  id            String      @id
-  requisitionId String
-  issuedById    String
-  issuedToId    String
-  receivedBy    String?
-  issueDate     DateTime    @default(now())
-  referenceNo   String      @unique
-  remarks       String?     @db.Text
-  issuedBy      User        @relation("IssuedByUser", fields: [issuedById], references: [id])
-  issuedTo      User        @relation("IssuedToUser", fields: [issuedToId], references: [id])
-  requisition   Requisition @relation(fields: [requisitionId], references: [id])
-
-  @@index([issuedById], map: "issuances_issuedById_fkey")
-  @@index([issuedToId], map: "issuances_issuedToId_fkey")
-  @@index([requisitionId], map: "issuances_requisitionId_fkey")
-  @@map("issuances")
-}
-
-model StockTransaction {
-  id                  String               @id @default(cuid())
-  type                StockTransactionType
-  itemId              String
-  quantity            Int
-  unitPrice           Float                @default(0)
-  referenceNo         String?
-  referenceType       String?
-  linkedRequisitionId String?
-  date                DateTime             @default(now())
-  userId              String
-  item                Item                 @relation(fields: [itemId], references: [id])
-  user                User                 @relation(fields: [userId], references: [id])
-  linkedRequisition   Requisition?         @relation(fields: [linkedRequisitionId], references: [id])
-
-  @@index([itemId])
-  @@index([type])
-  @@index([date])
-  @@index([linkedRequisitionId], map: "stock_transactions_linkedRequisitionId_fkey")
-  @@index([userId], map: "stock_transactions_userId_fkey")
-  @@map("stock_transactions")
-}
-
-model GRN {
-  id              String    @id
-  supplierId      String
-  grnDate         DateTime  @default(now())
-  invoiceNo       String?
-  invoiceDate     DateTime?
-  deliveryChallan String?
-  deliveryDate    DateTime?
-  remarks         String?   @db.Text
-  totalValue      Float     @default(0)
-  attachments     String?   @db.Text
-  items           GRNItem[]
-  supplier        Supplier  @relation(fields: [supplierId], references: [id])
-
-  @@index([supplierId], map: "grns_supplierId_fkey")
-  @@map("grns")
-}
-
-model GRNItem {
-  id          String @id @default(cuid())
-  grnId       String
-  itemId      String
-  receivedQty Int
-  unitPrice   Float
-  grn         GRN    @relation(fields: [grnId], references: [id], onDelete: Cascade)
-  item        Item   @relation(fields: [itemId], references: [id])
-
-  @@index([grnId], map: "grn_items_grnId_fkey")
-  @@index([itemId], map: "grn_items_itemId_fkey")
-  @@map("grn_items")
-}
-
-model AuditLog {
-  id        String   @id @default(cuid())
-  actorId   String
-  action    String
-  entity    String
-  entityId  String
-  before    String?  @db.Text
-  after     String?  @db.Text
-  timestamp DateTime @default(now())
-  actor     User     @relation(fields: [actorId], references: [id])
-
-  @@index([timestamp])
-  @@index([entity, entityId])
-  @@index([actorId], map: "audit_logs_actorId_fkey")
-  @@map("audit_logs")
-}
-
-model Notification {
-  id        String   @id @default(cuid())
-  userId    String
-  type      String
-  message   String
-  isRead    Boolean  @default(false)
-  link      String?
-  createdAt DateTime @default(now())
-  user      User     @relation(fields: [userId], references: [id])
-
-  @@index([userId, isRead])
-  @@map("notifications")
 }
 
 enum Role {
@@ -277,4 +38,246 @@ enum Priority {
   LOW
   NORMAL
   URGENT
+}
+
+model Department {
+  id    String @id @default(cuid())
+  name  String @unique
+
+  users        User[]
+  requisitions Requisition[]
+
+  @@map("departments")
+}
+
+model User {
+  id           String  @id @default(cuid())
+  name         String
+  email        String  @unique
+  passwordHash String
+  role         Role    @default(USER)
+  departmentId String
+  approverId   String?
+  isActive     Boolean @default(true)
+  avatarUrl    String? @db.LongText // data URL today; swap for an object-storage URL in production
+
+  department   Department @relation(fields: [departmentId], references: [id])
+  approver     User?      @relation("UserApprover", fields: [approverId], references: [id])
+  subordinates User[]     @relation("UserApprover")
+
+  requisitions       Requisition[]     @relation("RequesterRequisitions")
+  approvedReqs       Requisition[]     @relation("ApproverRequisitions")
+  issuances          Issuance[]        @relation("IssuedByUser")
+  receivedIssuances  Issuance[]        @relation("IssuedToUser")
+  stockTransactions  StockTransaction[]
+  auditLogs          AuditLog[]
+  notifications      Notification[]
+  passwordResetTokens PasswordResetToken[]
+
+  @@index([departmentId])
+  @@map("users")
+}
+
+model PasswordResetToken {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([token])
+  @@map("password_reset_tokens")
+}
+
+model Category {
+  id       String  @id @default(cuid())
+  name     String  @unique
+  parentId String?
+  icon     String?
+  color    String?
+
+  parent   Category?  @relation("CategoryHierarchy", fields: [parentId], references: [id])
+  children Category[] @relation("CategoryHierarchy")
+  items    Item[]
+
+  @@index([parentId])
+  @@map("categories")
+}
+
+model Item {
+  id            String  @id // ITM-XXXX format
+  name          String
+  categoryId    String
+  unit          String
+  unitPrice     Float
+  currentStock  Int     @default(0)
+  minStockLevel Int     @default(10)
+  isActive      Boolean @default(true)
+  iconKey       String?
+
+  category         Category          @relation(fields: [categoryId], references: [id])
+  requisitionItems RequisitionItem[]
+  stockTransactions StockTransaction[]
+  grnItems         GRNItem[]
+
+  @@index([categoryId])
+  @@map("items")
+}
+
+model Supplier {
+  id      String  @id @default(cuid())
+  name    String
+  contact String?
+  address String?
+
+  grns GRN[]
+
+  @@map("suppliers")
+}
+
+model Requisition {
+  id             String             @id // REQ-YYYY-XXXXX format
+  userId         String
+  departmentId   String
+  status         RequisitionStatus  @default(DRAFT)
+  purpose        String?
+  remarks        String?            @db.Text
+  requiredDate   DateTime?
+  totalAmount    Float              @default(0)
+  priority       Priority           @default(NORMAL)
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+  approvedById   String?
+  approvedAt     DateTime?
+  rejectedReason String?            @db.Text
+
+  user       User        @relation("RequesterRequisitions", fields: [userId], references: [id])
+  department Department  @relation(fields: [departmentId], references: [id])
+  approvedBy User?       @relation("ApproverRequisitions", fields: [approvedById], references: [id])
+  items      RequisitionItem[]
+  issuances  Issuance[]
+
+  @@index([status])
+  @@index([userId])
+  @@index([departmentId])
+  @@index([createdAt])
+  @@map("requisitions")
+}
+
+model RequisitionItem {
+  id            String @id @default(cuid())
+  requisitionId String
+  itemId        String
+  requestedQty  Int
+  approvedQty   Int    @default(0)
+  issuedQty     Int    @default(0)
+  unitPrice     Float
+
+  requisition Requisition @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+  item        Item        @relation(fields: [itemId], references: [id])
+
+  @@map("requisition_items")
+}
+
+model Issuance {
+  id            String   @id // ISS-YYYY-XXXXX format
+  requisitionId String
+  issuedById    String
+  issuedToId    String
+  receivedBy    String?
+  issueDate     DateTime @default(now())
+  referenceNo   String   @unique
+  remarks       String?  @db.Text
+
+  requisition Requisition @relation(fields: [requisitionId], references: [id])
+  issuedBy    User        @relation("IssuedByUser", fields: [issuedById], references: [id])
+  issuedTo    User        @relation("IssuedToUser", fields: [issuedToId], references: [id])
+
+  @@map("issuances")
+}
+
+model StockTransaction {
+  id            String               @id @default(cuid())
+  type          StockTransactionType
+  itemId        String
+  quantity      Int
+  unitPrice     Float                @default(0)
+  referenceNo   String?
+  referenceType String?
+  date          DateTime             @default(now())
+  userId        String
+
+  item Item @relation(fields: [itemId], references: [id])
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([itemId])
+  @@index([type])
+  @@index([date])
+  @@map("stock_transactions")
+}
+
+model GRN {
+  id              String    @id // GRN-YYYY-XXXX format
+  supplierId      String
+  grnDate         DateTime  @default(now())
+  invoiceNo       String?
+  invoiceDate     DateTime?
+  deliveryChallan String?
+  deliveryDate    DateTime?
+  remarks         String?   @db.Text
+  totalValue      Float     @default(0)
+  attachments     String?   @db.Text // JSON array of file paths
+
+  supplier Supplier  @relation(fields: [supplierId], references: [id])
+  items    GRNItem[]
+
+  @@map("grns")
+}
+
+model GRNItem {
+  id          String @id @default(cuid())
+  grnId       String
+  itemId      String
+  receivedQty Int
+  unitPrice   Float
+
+  grn  GRN  @relation(fields: [grnId], references: [id], onDelete: Cascade)
+  item Item @relation(fields: [itemId], references: [id])
+
+  @@map("grn_items")
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  actorId   String
+  action    String
+  entity    String
+  entityId  String
+  before    String?  @db.Text // JSON
+  after     String?  @db.Text // JSON
+  timestamp DateTime @default(now())
+
+  actor User @relation(fields: [actorId], references: [id])
+
+  @@index([timestamp])
+  @@index([entity, entityId])
+  @@map("audit_logs")
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  type      String
+  message   String
+  isRead    Boolean  @default(false)
+  link      String?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, isRead])
+  @@map("notifications")
 }

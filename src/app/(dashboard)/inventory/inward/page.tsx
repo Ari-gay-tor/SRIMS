@@ -140,8 +140,8 @@ export default function StockInwardPage() {
   const totalQuantity = validLines.reduce((s, l) => s + l.receivedQty, 0);
   const grandTotal = validLines.reduce((s, l) => s + l.receivedQty * l.unitPrice, 0);
 
-  const handleSubmit = async () => {
-    const grnId = await submitGRN({
+  const handleSubmit = () => {
+    const grnId = submitGRN({
       supplierId,
       supplierName: supplier?.name || "",
       grnDate,
@@ -343,7 +343,47 @@ export default function StockInwardPage() {
 
             {/* Item Details */}
             <div className="rounded-card border border-border bg-surface-card p-card-padding">
-              <h3 className="mb-4 text-[15px] font-semibold text-text-primary">2. Item Details</h3>
+              <div className="mb-4 flex items-center justify-between">
+                <h3 className="text-[15px] font-semibold text-text-primary">2. Item Details</h3>
+                <button
+                  onClick={() => {
+                    const csvText = prompt(
+                      "Paste items as CSV (one row per item):\nFormat: Item Name, Quantity, Unit Price\n\nExample:\nA4 Copier Paper, 10, 210\nBall Pen (Blue), 50, 5"
+                    );
+                    if (!csvText) return;
+                    const newLines = csvText
+                      .split("\n")
+                      .map((row) => row.trim())
+                      .filter(Boolean)
+                      .map((row, i) => {
+                        const parts = row.split(",").map((p) => p.trim());
+                        const nameOrId = parts[0] || "";
+                        const qty = parseFloat(parts[1]) || 1;
+                        const price = parseFloat(parts[2]) || 0;
+                        // Try to match by name in the catalog
+                        const catalogItem = catalogItems.find(
+                          (c) => c.name.toLowerCase() === nameOrId.toLowerCase() || c.id === nameOrId
+                        );
+                        return {
+                          id: `line-bulk-${Date.now()}-${i}`,
+                          itemId: catalogItem?.id || "",
+                          itemName: catalogItem?.name || nameOrId,
+                          categoryName: catalogItem?.categoryName || "",
+                          unit: catalogItem?.unit || "",
+                          receivedQty: qty,
+                          unitPrice: price || catalogItem?.unitPrice || 0,
+                          iconKey: catalogItem?.iconKey,
+                        };
+                      });
+                    setLines((prev) => [...prev.filter((l) => l.itemId || l.itemName), ...newLines]);
+                  }}
+                  className="flex items-center gap-1.5 text-[12px] font-medium text-brand-primary hover:underline"
+                  title="Paste multiple items at once from clipboard (CSV format)"
+                >
+                  <Plus size={12} />
+                  Bulk Add (paste CSV)
+                </button>
+              </div>
               <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead>

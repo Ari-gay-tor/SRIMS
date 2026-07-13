@@ -4,8 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "postinstall": "prisma generate",
-    "build": "prisma generate && next build",
+    "build": "next build",
     "start": "next start",
     "lint": "next lint",
     "db:migrate": "prisma migrate dev",
@@ -39,11 +38,13 @@
     "lucide-react": "^1.21.0",
     "next": "14.2.35",
     "next-auth": "^4.24.14",
+    "prisma": "5.22.0",
     "react": "^18",
     "react-dom": "^18",
     "react-hook-form": "^7.80.0",
     "recharts": "^3.9.0",
     "tailwind-merge": "^3.6.0",
+    "xlsx": "^0.18.5",
     "zod": "^4.4.3",
     "zustand": "^5.0.14"
   },
@@ -54,7 +55,6 @@
     "eslint": "^8",
     "eslint-config-next": "14.2.35",
     "postcss": "^8",
-    "prisma": "5.22.0",
     "tailwindcss": "^3.4.1",
     "ts-node": "^10.9.2",
     "typescript": "^5"

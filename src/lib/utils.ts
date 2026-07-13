@@ -15,26 +15,15 @@ export function formatCurrency(amount: number): string {
 }
 
 export function formatDate(date: Date | string): string {
-  const d = new Date(date);
-
-  if (isNaN(d.getTime())) {
-    return "Invalid Date";
-  }
-
   return new Intl.DateTimeFormat("en-IN", {
     day: "2-digit",
     month: "short",
     year: "numeric",
-  }).format(d);
+  }).format(new Date(date));
 }
 
 export function formatDateTime(date: Date | string): string {
   const d = new Date(date);
-
-  if (isNaN(d.getTime())) {
-    return "Invalid Date";
-  }
-
   return `${formatDate(d)}, ${d.toLocaleTimeString("en-IN", {
     hour: "2-digit",
     minute: "2-digit",

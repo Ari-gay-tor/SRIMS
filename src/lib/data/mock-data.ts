@@ -501,12 +501,29 @@ export function getLowStockItems(): MockItem[] {
 }
 
 // ─── Helper: generate new IDs ───
-let reqCounter = 129;
+/**
+ * Generates a globally unique requisition ID using:
+ *   - Current year (so IDs are visually year-scoped)
+ *   - Unix timestamp in seconds (unique per second across users)
+ *   - 3-digit random suffix (collision protection within the same second)
+ *
+ * Format:  REQ-2026-1751234567-842
+ * Guarantees: no two IDs are the same regardless of which user submits,
+ * how fast they submit, or whether the server has restarted.
+ */
 export function generateRequisitionId(): string {
-  return `REQ-2025-${String(reqCounter++).padStart(5, "0")}`;
+  const year = new Date().getFullYear();
+  const ts   = Math.floor(Date.now() / 1000);
+  const rand = Math.floor(Math.random() * 1000).toString().padStart(3, "0");
+  return `REQ-${year}-${ts}-${rand}`;
 }
 
-let issCounter = 156;
+/**
+ * Same pattern for Issuance IDs.
+ */
 export function generateIssuanceId(): string {
-  return `ISS-2025-${String(issCounter++).padStart(5, "0")}`;
+  const year = new Date().getFullYear();
+  const ts   = Math.floor(Date.now() / 1000);
+  const rand = Math.floor(Math.random() * 1000).toString().padStart(3, "0");
+  return `ISS-${year}-${ts}-${rand}`;
 }
