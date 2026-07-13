@@ -16,8 +16,6 @@ export default function AdjustStockPage() {
   const [direction, setDirection] = useState<"increase" | "decrease">("increase");
   const [quantity, setQuantity] = useState(1);
   const [reason, setReason] = useState("");
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [submitError, setSubmitError] = useState("");
 
   // Deep-link support: /inventory/adjust?item=ITM-0001 (used by Stock Overview's kebab menu)
   useEffect(() => {
@@ -31,30 +29,22 @@ export default function AdjustStockPage() {
   const adjustmentHistory = stockTransactions.filter((t) => t.type === "ADJUSTMENT");
   const selectedItem = stockItems.find((i) => i.id === itemId);
 
-  const handleSubmit = async () => {
+  const handleSubmit = () => {
     if (!selectedItem || quantity <= 0 || !reason) return;
     const signedQty = direction === "increase" ? quantity : -quantity;
-    setIsSubmitting(true);
-    setSubmitError("");
-    try {
-      await recordManualMovement({
-        type: "ADJUSTMENT",
-        itemId: selectedItem.id,
-        itemName: selectedItem.name,
-        quantity: signedQty,
-        unitPrice: selectedItem.unitPrice,
-        referenceNo: `ADJ-${Date.now().toString().slice(-6)}`,
-        remarks: reason,
-      });
-      setShowForm(false);
-      setItemId("");
-      setQuantity(1);
-      setReason("");
-    } catch (err) {
-      setSubmitError(err instanceof Error ? err.message : "Failed to record adjustment");
-    } finally {
-      setIsSubmitting(false);
-    }
+    recordManualMovement({
+      type: "ADJUSTMENT",
+      itemId: selectedItem.id,
+      itemName: selectedItem.name,
+      quantity: signedQty,
+      unitPrice: selectedItem.unitPrice,
+      referenceNo: `ADJ-${Date.now().toString().slice(-6)}`,
+      remarks: reason,
+    });
+    setShowForm(false);
+    setItemId("");
+    setQuantity(1);
+    setReason("");
   };
 
   return (
@@ -141,9 +131,6 @@ export default function AdjustStockPage() {
               </span>
             </div>
           )}
-          {submitError && (
-            <p className="mt-2 text-[12px] text-red-600">{submitError}</p>
-          )}
           <div className="mt-4 flex gap-2">
             <button
               onClick={() => setShowForm(false)}
@@ -153,10 +140,10 @@ export default function AdjustStockPage() {
             </button>
             <button
               onClick={handleSubmit}
-              disabled={!itemId || quantity <= 0 || !reason || isSubmitting}
+              disabled={!itemId || quantity <= 0 || !reason}
               className="rounded-button bg-brand-primary px-4 py-2 text-[13px] font-semibold text-white hover:bg-brand-primary-hover disabled:opacity-40"
             >
-              {isSubmitting ? "Applying..." : "Apply Adjustment"}
+              Apply Adjustment
             </button>
           </div>
         </div>

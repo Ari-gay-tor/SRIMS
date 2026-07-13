@@ -2,8 +2,8 @@
 
 import React, { useState } from "react";
 import PageHeader from "@/components/layout/PageHeader";
+import ToggleSwitch from "@/components/shared/ToggleSwitch";
 import { useAppStore } from "@/stores/app-store";
-import { departments } from "@/lib/data/mock-data";
 import { UserRole } from "@/types";
 import { Plus, Pencil, Trash2, X, ShieldAlert } from "lucide-react";
 
@@ -22,15 +22,17 @@ const roleBadgeColors: Record<UserRole, string> = {
 };
 
 export default function UsersPage() {
-  const { allUsers, currentUser, addUser, updateUser, toggleUserActive, deleteUser } = useAppStore();
+  const { allUsers, departments, currentUser, addUser, updateUser, toggleUserActive, deleteUser } = useAppStore();
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [deactivateConfirmId, setDeactivateConfirmId] = useState<string | null>(null);
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<UserRole>("USER");
-  const [departmentId, setDepartmentId] = useState(departments[0].id);
+  const [departmentId, setDepartmentId] = useState(departments[0]?.id || "");
+  const [formError, setFormError] = useState("");
 
   if (currentUser.role !== "ADMIN") {
     return (
@@ -50,7 +52,8 @@ export default function UsersPage() {
     setName("");
     setEmail("");
     setRole("USER");
-    setDepartmentId(departments[0].id);
+    setDepartmentId(departments[0]?.id || "");
+    setFormError("");
     setShowModal(true);
   };
 
@@ -62,18 +65,51 @@ export default function UsersPage() {
     setEmail(u.email);
     setRole(u.role);
     setDepartmentId(u.departmentId);
+    setFormError("");
     setShowModal(true);
   };
 
   const handleSave = () => {
-    if (!name.trim() || !email.trim()) return;
+    setFormError("");
+    const trimmedName  = name.trim();
+    const trimmedEmail = email.trim().toLowerCase();
+
+    if (!trimmedName)  { setFormError("Name is required."); return; }
+    if (trimmedName.length > 80) { setFormError("Name must be 80 characters or fewer."); return; }
+    if (!trimmedEmail) { setFormError("Email is required."); return; }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
+      setFormError("Please enter a valid email address.");
+      return;
+    }
+
+    // Duplicate email check (ignore the row being edited)
+    const emailExists = allUsers.some(
+      (u) => u.email.toLowerCase() === trimmedEmail && u.id !== editingId
+    );
+    if (emailExists) {
+      setFormError(`A user with the email "${trimmedEmail}" already exists.`);
+      return;
+    }
+
     const dept = departments.find((d) => d.id === departmentId);
     if (editingId) {
-      updateUser(editingId, { name, email, role, departmentId, departmentName: dept?.name || "" });
+      updateUser(editingId, {
+        name: trimmedName,
+        email: trimmedEmail,
+        role,
+        departmentId,
+        departmentName: dept?.name || "",
+      });
     } else {
       addUser({
-        name, email, role, departmentId, departmentName: dept?.name || "",
-        passwordHash: "Welcome@123", approverId: null, isActive: true,
+        name: trimmedName,
+        email: trimmedEmail,
+        role,
+        departmentId,
+        departmentName: dept?.name || "",
+        passwordHash: "Welcome@123",
+        approverId: null,
+        isActive: true,
       });
     }
     setShowModal(false);
@@ -101,7 +137,7 @@ export default function UsersPage() {
                 <th className="px-4 py-3 text-left text-table-header uppercase tracking-table-header text-text-secondary">Email</th>
                 <th className="px-4 py-3 text-left text-table-header uppercase tracking-table-header text-text-secondary">Department</th>
                 <th className="px-4 py-3 text-center text-table-header uppercase tracking-table-header text-text-secondary">Role</th>
-                <th className="px-4 py-3 text-center text-table-header uppercase tracking-table-header text-text-secondary">Active</th>
+                <th className="px-4 py-3 text-left text-table-header uppercase tracking-table-header text-text-secondary">Status</th>
                 <th className="px-4 py-3 text-center text-table-header uppercase tracking-table-header text-text-secondary">Actions</th>
               </tr>
             </thead>
@@ -123,13 +159,23 @@ export default function UsersPage() {
                       {roleLabels[u.role]}
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-center">
-                    <button
-                      onClick={() => toggleUserActive(u.id)}
-                      className={`relative h-5 w-9 rounded-full transition-colors ${u.isActive ? "bg-brand-primary" : "bg-gray-300"}`}
-                    >
-                      <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${u.isActive ? "translate-x-4" : "translate-x-0.5"}`} />
-                    </button>
+                  <td className="px-4 py-3">
+                    <ToggleSwitch
+                      checked={u.isActive}
+                      onChange={(val) => {
+                        if (u.id === currentUser.id) return;
+                        if (!val) {
+                          // Deactivating → confirm first
+                          setDeactivateConfirmId(u.id);
+                        } else {
+                          // Re-activating → no confirm needed
+                          toggleUserActive(u.id);
+                        }
+                      }}
+                      disabled={u.id === currentUser.id}
+                      disabledReason="You cannot deactivate your own account"
+                      showLabel={true}
+                    />
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center justify-center gap-1">
@@ -160,11 +206,25 @@ export default function UsersPage() {
             <div className="space-y-4">
               <div>
                 <label className="mb-1.5 block text-[13px] font-medium text-text-primary">Full Name *</label>
-                <input type="text" value={name} onChange={(e) => setName(e.target.value)} className="w-full rounded-button border border-border px-3 py-2 text-[14px] focus:border-brand-primary focus:outline-none" />
+                <input
+                  type="text"
+                  value={name}
+                  onChange={(e) => { setName(e.target.value); setFormError(""); }}
+                  maxLength={80}
+                  placeholder="e.g. Amit Sharma"
+                  className="w-full rounded-button border border-border px-3 py-2 text-[14px] placeholder:text-text-muted focus:border-brand-primary focus:outline-none"
+                />
               </div>
               <div>
                 <label className="mb-1.5 block text-[13px] font-medium text-text-primary">Email *</label>
-                <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full rounded-button border border-border px-3 py-2 text-[14px] focus:border-brand-primary focus:outline-none" />
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => { setEmail(e.target.value); setFormError(""); }}
+                  maxLength={120}
+                  placeholder="user@srims.com"
+                  className="w-full rounded-button border border-border px-3 py-2 text-[14px] placeholder:text-text-muted focus:border-brand-primary focus:outline-none"
+                />
               </div>
               <div>
                 <label className="mb-1.5 block text-[13px] font-medium text-text-primary">Role *</label>
@@ -183,10 +243,15 @@ export default function UsersPage() {
                   A temporary password (Welcome@123) will be assigned. The user should change it on first login.
                 </div>
               )}
+              {formError && (
+                <div className="rounded-md bg-red-50 px-3 py-2 text-[12px] font-medium text-red-700">
+                  {formError}
+                </div>
+              )}
             </div>
             <div className="mt-6 flex justify-end gap-2">
-              <button onClick={() => setShowModal(false)} className="rounded-button border border-border px-4 py-2 text-[13px] text-text-secondary hover:bg-gray-50">Cancel</button>
-              <button onClick={handleSave} disabled={!name.trim() || !email.trim()} className="rounded-button bg-brand-primary px-4 py-2 text-[13px] font-semibold text-white hover:bg-brand-primary-hover disabled:opacity-40">
+              <button onClick={() => { setShowModal(false); setFormError(""); }} className="rounded-button border border-border px-4 py-2 text-[13px] text-text-secondary hover:bg-gray-50">Cancel</button>
+              <button onClick={handleSave} className="rounded-button bg-brand-primary px-4 py-2 text-[13px] font-semibold text-white hover:bg-brand-primary-hover">
                 {editingId ? "Save Changes" : "Add User"}
               </button>
             </div>
@@ -202,6 +267,32 @@ export default function UsersPage() {
             <div className="flex justify-end gap-2">
               <button onClick={() => setDeleteConfirmId(null)} className="rounded-button border border-border px-4 py-2 text-[13px] text-text-secondary hover:bg-gray-50">Cancel</button>
               <button onClick={() => { deleteUser(deleteConfirmId); setDeleteConfirmId(null); }} className="rounded-button bg-red-600 px-4 py-2 text-[13px] font-semibold text-white hover:bg-red-700">Delete</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {deactivateConfirmId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="w-full max-w-sm rounded-card bg-surface-card p-6 shadow-lg">
+            <h3 className="mb-2 text-[15px] font-semibold text-text-primary">Deactivate user?</h3>
+            <p className="mb-1 text-[13px] text-text-secondary">
+              <strong>{allUsers.find((u) => u.id === deactivateConfirmId)?.name}</strong> will immediately
+              lose the ability to log in. Their data and history are preserved.
+            </p>
+            <p className="mb-4 text-[12px] text-text-muted">
+              You can re-activate them at any time by toggling the switch again.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setDeactivateConfirmId(null)} className="rounded-button border border-border px-4 py-2 text-[13px] text-text-secondary hover:bg-gray-50">
+                Cancel
+              </button>
+              <button
+                onClick={() => { toggleUserActive(deactivateConfirmId); setDeactivateConfirmId(null); }}
+                className="rounded-button bg-amber-600 px-4 py-2 text-[13px] font-semibold text-white hover:bg-amber-700"
+              >
+                Yes, Deactivate
+              </button>
             </div>
           </div>
         </div>

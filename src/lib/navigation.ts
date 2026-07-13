@@ -30,7 +30,6 @@ export const navigation: NavSection[] = [
             label: "Pending Approvals",
             href: "/approvals/pending",
             icon: "CheckSquare",
-            badge: 18, 
           },
           { label: "Approved", href: "/approvals/approved", icon: "CheckSquare" },
           { label: "Rejected", href: "/approvals/rejected", icon: "CheckSquare" },
@@ -99,6 +98,12 @@ export const navigation: NavSection[] = [
         href: "/masters/items",
         icon: "Box",
         roles: ["ADMIN", "INVENTORY_MGR"],
+      },
+      {
+        label: "Departments",
+        href: "/masters/departments",
+        icon: "Building2",
+        roles: ["ADMIN"],
       },
       {
         label: "Suppliers",

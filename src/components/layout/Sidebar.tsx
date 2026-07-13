@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { navigation } from "@/lib/navigation";
 import { UserRole, NavItem, NavSection } from "@/types";
+import { useAppStore } from "@/stores/app-store";
 import {
   ShoppingCart,
   LayoutDashboard,
@@ -80,6 +81,13 @@ export default function Sidebar({ userRole, collapsed, onToggle, mobileOpen = fa
     Inventory: true,
   });
 
+  // Live pending approvals count — shown as badge only for roles that can act on them
+  const pendingCount = useAppStore((s) =>
+    (userRole === "ADMIN" || userRole === "APPROVER")
+      ? s.requisitions.filter((r) => r.status === "PENDING").length
+      : 0
+  );
+
   const toggleMenu = (label: string) => {
     setExpandedMenus((prev) => ({ ...prev, [label]: !prev[label] }));
   };
@@ -149,11 +157,16 @@ export default function Sidebar({ userRole, collapsed, onToggle, mobileOpen = fa
             {!collapsed && (
               <>
                 <span className="flex-1">{item.label}</span>
-                {item.badge !== undefined && item.badge > 0 && (
+                {/* Dynamic badge: live pending count only on Pending Approvals */}
+                {item.href === "/approvals/pending" && pendingCount > 0 ? (
+                  <span className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-red-500 px-1.5 text-[10px] font-semibold text-white">
+                    {pendingCount}
+                  </span>
+                ) : item.badge !== undefined && item.badge > 0 ? (
                   <span className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-red-500 px-1.5 text-[10px] font-semibold text-white">
                     {item.badge}
                   </span>
-                )}
+                ) : null}
               </>
             )}
           </Link>

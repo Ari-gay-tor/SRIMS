@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import bcrypt from "bcryptjs";
 import { authOptions } from "@/lib/auth";
 import { isDatabaseConfigured, getPrismaClient } from "@/lib/prisma";
+import { serverDeactivateUser, serverActivateUser } from "@/lib/server-auth-state";
 
 async function requireAdmin() {
   const session = await getServerSession(authOptions);
@@ -11,15 +12,32 @@ async function requireAdmin() {
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
-  if (!isDatabaseConfigured) {
-    return NextResponse.json({ error: "No database configured." }, { status: 503 });
-  }
   const session = await requireAdmin();
   if (!session) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   try {
     const body = await req.json();
     const { name, email, role, departmentId, isActive, avatarUrl, password } = body;
+
+    // ── Always: sync the server-side isActive registry ──
+    // This makes deactivating a user actually prevent their NEXT login attempt
+    // even in mock-data mode (no database needed — the registry is a
+    // module-level Set that lives in the Node.js process; see server-auth-state.ts).
+    if (isActive !== undefined) {
+      if (isActive) {
+        serverActivateUser(params.id);
+      } else {
+        serverDeactivateUser(params.id);
+      }
+    }
+
+    // ── Database path: persist to MySQL when connected ──
+    if (!isDatabaseConfigured) {
+      // No DB — the server-auth-state registry update above is all we can do
+      // without persistence. The Zustand client-side state (via the store's
+      // toggleUserActive action) handles the UI update optimistically.
+      return NextResponse.json({ id: params.id, synced: "server-registry-only" });
+    }
 
     const prisma = getPrismaClient();
     const data: Record<string, unknown> = {};

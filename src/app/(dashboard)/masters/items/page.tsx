@@ -4,6 +4,7 @@ import React, { useState, useMemo, useEffect, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import PageHeader from "@/components/layout/PageHeader";
 import ItemIcon, { ITEM_ICON_OPTIONS } from "@/components/icons/items/ItemIcon";
+import ToggleSwitch from "@/components/shared/ToggleSwitch";
 import { useAppStore } from "@/stores/app-store";
 import { formatCurrency } from "@/lib/utils";
 import { Plus, Pencil, Trash2, X, Search, Upload } from "lucide-react";
@@ -161,13 +162,13 @@ export default function ItemsMasterPage() {
                   <td className="px-4 py-3 text-[13px] text-text-secondary">{item.unit}</td>
                   <td className="px-4 py-3 text-right text-[13px] text-text-primary">{formatCurrency(item.unitPrice)}</td>
                   <td className="px-4 py-3 text-right text-[13px] text-text-secondary">{item.minStockLevel}</td>
-                  <td className="px-4 py-3 text-center">
-                    <button
-                      onClick={() => toggleItemActive(item.id)}
-                      className={`relative h-5 w-9 rounded-full transition-colors ${item.isActive ? "bg-brand-primary" : "bg-gray-300"}`}
-                    >
-                      <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${item.isActive ? "translate-x-4" : "translate-x-0.5"}`} />
-                    </button>
+                  <td className="px-4 py-3">
+                    <ToggleSwitch
+                      checked={item.isActive}
+                      onChange={() => toggleItemActive(item.id)}
+                      showLabel={true}
+                      size="sm"
+                    />
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center justify-center gap-1">

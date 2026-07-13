@@ -15,6 +15,22 @@ import {
   LogOut,
 } from "lucide-react";
 
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+function toInputValue(d: Date) {
+  return d.toISOString().slice(0, 10);
+}
+function formatDisplay(iso: string) {
+  return new Date(iso + "T00:00:00").toLocaleDateString("en-IN", {
+    day: "2-digit", month: "short", year: "numeric",
+  });
+}
+function defaultRange() {
+  const now = new Date();
+  const from = new Date(now.getFullYear(), now.getMonth(), 1);
+  const to   = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+  return { from: toInputValue(from), to: toInputValue(to) };
+}
+
 interface TopbarProps {
   user: User;
   sidebarCollapsed: boolean;
@@ -42,6 +58,8 @@ export default function Topbar({
   const { notifications, markNotificationRead } = useAppStore();
   const [showNotifs, setShowNotifs] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [dateRange, setDateRange] = useState(defaultRange);
   const unreadCount = notifications.filter((n) => !n.isRead).length;
 
   const roleLabels: Record<string, string> = {
@@ -70,12 +88,63 @@ export default function Topbar({
 
       {/* Right cluster */}
       <div className="flex items-center gap-4">
-        {/* Date Range Picker */}
-        <button className="hidden items-center gap-2 rounded-lg border border-border px-3 py-1.5 text-[13px] text-text-secondary hover:bg-gray-50 md:flex">
-          <Calendar size={14} />
-          <span>01 May 2025 – 31 May 2025</span>
-          <ChevronDown size={14} />
-        </button>
+
+        {/* Date Range Filter */}
+        <div className="relative hidden md:block">
+          <button
+            onClick={() => setShowDatePicker(!showDatePicker)}
+            className="flex items-center gap-2 rounded-lg border border-border px-3 py-1.5 text-[13px] text-text-secondary hover:bg-gray-50"
+          >
+            <Calendar size={14} />
+            <span>{formatDisplay(dateRange.from)} – {formatDisplay(dateRange.to)}</span>
+            <ChevronDown size={14} />
+          </button>
+
+          {showDatePicker && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setShowDatePicker(false)} />
+              <div className="absolute right-0 top-full z-50 mt-2 w-72 rounded-card border border-border bg-surface-card p-4 shadow-lg">
+                <p className="mb-3 text-[12px] font-semibold text-text-primary">Select Date Range</p>
+                <div className="space-y-3">
+                  <div>
+                    <label className="mb-1 block text-[11px] font-medium text-text-secondary">From</label>
+                    <input
+                      type="date"
+                      value={dateRange.from}
+                      max={dateRange.to}
+                      onChange={(e) => setDateRange((r) => ({ ...r, from: e.target.value }))}
+                      className="w-full rounded-md border border-border px-3 py-1.5 text-[13px] text-text-primary focus:border-brand-primary focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-[11px] font-medium text-text-secondary">To</label>
+                    <input
+                      type="date"
+                      value={dateRange.to}
+                      min={dateRange.from}
+                      onChange={(e) => setDateRange((r) => ({ ...r, to: e.target.value }))}
+                      className="w-full rounded-md border border-border px-3 py-1.5 text-[13px] text-text-primary focus:border-brand-primary focus:outline-none"
+                    />
+                  </div>
+                </div>
+                <div className="mt-4 flex items-center justify-between gap-2">
+                  <button
+                    onClick={() => { setDateRange(defaultRange()); }}
+                    className="text-[12px] text-text-muted hover:text-text-primary"
+                  >
+                    Reset to current month
+                  </button>
+                  <button
+                    onClick={() => setShowDatePicker(false)}
+                    className="rounded-md bg-brand-primary px-3 py-1.5 text-[12px] font-medium text-white hover:opacity-90"
+                  >
+                    Apply
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
 
         {/* Notifications Bell */}
         <div className="relative">

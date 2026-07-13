@@ -12,6 +12,7 @@ export default withAuth(
   }
 );
 
+// Protect every route except /login, NextAuth's own API routes, and static assets.
 export const config = {
   matcher: [
     "/dashboard/:path*",

@@ -61,8 +61,19 @@ export default function NewRequisitionPage() {
   const itemsPerPage = 5;
 
   // Step 2 form fields
+  const todayStr = new Date().toISOString().slice(0, 10);
+
+  // Default required date = today + 7 days, skipping to Monday if it lands on a weekend
+  const defaultRequiredDate = (() => {
+    const d = new Date(Date.now() + 7 * 86400000);
+    const day = d.getDay();
+    if (day === 0) d.setDate(d.getDate() + 1);      // Sunday → Monday
+    if (day === 6) d.setDate(d.getDate() + 2);      // Saturday → Monday
+    return d.toISOString().slice(0, 10);
+  })();
+
   const [department, setDepartment] = useState(currentUser.departmentName);
-  const [requiredDate, setRequiredDate] = useState("");
+  const [requiredDate, setRequiredDate] = useState(defaultRequiredDate);
   const [purpose, setPurpose] = useState("");
   const [remarks, setRemarks] = useState("");
   const [priority, setPriority] = useState<"LOW" | "NORMAL" | "URGENT">("NORMAL");
@@ -250,9 +261,6 @@ export default function NewRequisitionPage() {
                       <th className="pb-2 text-left text-table-header uppercase tracking-table-header text-text-secondary">
                         Category
                       </th>
-                      <th className="pb-2 text-right text-table-header uppercase tracking-table-header text-text-secondary">
-                        Available
-                      </th>
                       <th className="pb-2 text-left text-table-header uppercase tracking-table-header text-text-secondary">
                         Unit
                       </th>
@@ -283,9 +291,6 @@ export default function NewRequisitionPage() {
                         <td className="py-3 text-[13px] text-text-secondary">
                           {item.categoryName}
                         </td>
-                        <td className="py-3 text-right text-[13px] font-medium text-text-primary">
-                          {item.currentStock}
-                        </td>
                         <td className="py-3 text-[13px] text-text-secondary">
                           {item.unit}
                         </td>
@@ -297,8 +302,7 @@ export default function NewRequisitionPage() {
                           ) : (
                             <button
                               onClick={() => addToCart(item)}
-                              disabled={item.currentStock === 0}
-                              className="inline-flex items-center gap-1 rounded-button border border-brand-primary px-3 py-1.5 text-[12px] font-medium text-brand-primary hover:bg-brand-primary hover:text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                              className="inline-flex items-center gap-1 rounded-button border border-brand-primary px-3 py-1.5 text-[12px] font-medium text-brand-primary hover:bg-brand-primary hover:text-white transition-colors"
                             >
                               <Plus size={12} />
                               Add
@@ -402,9 +406,6 @@ export default function NewRequisitionPage() {
                           <div className="text-[13px] font-medium text-text-primary truncate">
                             {item.itemName}
                           </div>
-                          <div className="text-[11px] text-text-muted">
-                            Stock: {item.availableStock} {item.unit}
-                          </div>
                           <div className="text-[12px] text-text-secondary">
                             {formatCurrency(item.unitPrice)} / {item.unit}
                           </div>
@@ -415,7 +416,7 @@ export default function NewRequisitionPage() {
                                 updateCartQuantity(item.itemId, v)
                               }
                               min={1}
-                              max={item.availableStock}
+                              max={9999}
                               size="sm"
                             />
                             <span className="text-[13px] font-semibold text-text-primary">
@@ -455,8 +456,8 @@ export default function NewRequisitionPage() {
                   <div className="mt-3 flex items-start gap-2 rounded-md bg-tint-blue-bg p-2.5">
                     <Info size={14} className="mt-0.5 flex-shrink-0 text-tint-blue-icon" />
                     <span className="text-[11px] text-tint-blue-icon">
-                      Stock availability is subject to change at the time of
-                      approval.
+                      Your approver will review quantities and authorise
+                      issuance based on availability.
                     </span>
                   </div>
 
@@ -510,6 +511,7 @@ export default function NewRequisitionPage() {
                 <input
                   type="date"
                   value={requiredDate}
+                  min={todayStr}
                   onChange={(e) => setRequiredDate(e.target.value)}
                   className="w-full rounded-button border border-border px-3 py-2 text-[14px] text-text-primary focus:border-brand-primary focus:outline-none focus:ring-1 focus:ring-brand-primary"
                 />

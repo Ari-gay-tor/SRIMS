@@ -52,30 +52,6 @@ async function main() {
   //     Some users reference an approver that appears later in the array,
   //     so resolving approverId in a second pass avoids FK ordering issues.) ───
   const SALT_ROUNDS = 10;
-
-  // System actor used for auto-approval (referenced as approvedById on requisitions)
-  const systemPasswordHash = await bcrypt.hash("system-no-login", SALT_ROUNDS);
-  await prisma.user.upsert({
-    where: { id: "system-auto-approval" },
-    update: {
-      name: "Auto-Approval System",
-      email: "system-auto-approval@srims.internal",
-      passwordHash: systemPasswordHash,
-      role: Role.ADMIN,
-      departmentId: departments[0].id,
-      isActive: false,
-    },
-    create: {
-      id: "system-auto-approval",
-      name: "Auto-Approval System",
-      email: "system-auto-approval@srims.internal",
-      passwordHash: systemPasswordHash,
-      role: Role.ADMIN,
-      departmentId: departments[0].id,
-      isActive: false,
-    },
-  });
-
   for (const user of users) {
     const passwordHash = await bcrypt.hash(user.passwordHash, SALT_ROUNDS);
     await prisma.user.upsert({
@@ -223,8 +199,6 @@ async function main() {
         quantity: txn.quantity,
         unitPrice: txn.unitPrice,
         referenceNo: txn.referenceNo,
-        referenceType: txn.type === "INWARD" ? "GRN" : txn.type === "OUTWARD" ? "MANUAL" : "MANUAL",
-        linkedRequisitionId: txn.linkedRequisitionId || null,
         date: new Date(txn.date),
         userId: txn.userId,
       },
@@ -235,8 +209,6 @@ async function main() {
         quantity: txn.quantity,
         unitPrice: txn.unitPrice,
         referenceNo: txn.referenceNo,
-        referenceType: txn.type === "INWARD" ? "GRN" : txn.type === "OUTWARD" ? "MANUAL" : "MANUAL",
-        linkedRequisitionId: txn.linkedRequisitionId || null,
         date: new Date(txn.date),
         userId: txn.userId,
       },
