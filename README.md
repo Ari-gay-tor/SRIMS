@@ -257,4 +257,4 @@ prisma/
 - The role switcher (🔄 button, bottom-right) is a dev convenience layered on top of a real login — it previews different accounts' app data/permissions without needing to log out and back in. It does not bypass the auth gate itself.
 - CSV and PDF exports on the Reports page are both real and fully functional, entirely client-side, no backend required.
 - Try resizing your browser below 1024px width to see the sidebar collapse into a slide-over drawer with backdrop.
-- Profile avatars are stored as data URLs in memory (Zustand) — like all other app data, they reset on page refresh since there's no database yet.
+- Profile avatars are stored as data URLs in memory (Zustand) — like all other app data, they reset on page refresh since there's no database yet
